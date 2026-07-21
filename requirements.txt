@@ -1,0 +1,14 @@
+# Install these on top of Hunyuan3D-2's own requirements (see README.md step 2).
+# torch itself is not listed here -- it gets installed as part of the Hunyuan3D-2 setup.
+# This covers foundpose_lite/, run_single_view_pipeline.py, run_multiview_pipeline.py, AND
+# the mask+axes visualization used by run_official_pipeline.py. The official FoundPose
+# algorithm itself (run_official_pipeline.py's gen_templates/gen_repre/infer steps) needs
+# its OWN separate environment -- see README.md "Official pipeline setup".
+pyrender
+PyOpenGL
+scikit-learn
+trimesh
+scipy
+opencv-python
+pillow
+numpy
