@@ -1,21 +1,30 @@
-"""Full single-view pipeline: one photo -> 3D reconstruction -> pose estimation ->
-mask+axes visualization.
+"""Full single-view pipeline using the ACTUAL official FoundPose (facebookresearch/foundpose,
+ECCV 2024) algorithm: one photo -> 3D reconstruction (Hunyuan3D-2) -> pose estimation
+(the official repo's rendering, DINOv2 matching via its "cyclic buddies" correspondence
+filter, PnP-RANSAC, run in its own conda env -- see foundpose_official/build_bop_dataset.py
+and pipeline_common.py) -> mask+axes visualization.
 
-Usage (uses the included starsat example by default):
+Needs TWO conda environments (this pipeline's own env, and a separate one for the
+official repo -- their dependency stacks don't mix). See README.md "Official pipeline
+setup" for how to create both.
+
+Usage (uses the included starsat example by default, all 5 photos):
     python run_single_view_pipeline.py
 
-Usage (your own image):
-    python run_single_view_pipeline.py --image path/to/photo.jpg --out-dir output/myobject
-
-Usage (estimate pose on a DIFFERENT photo than the one used to build the mesh):
-    python run_single_view_pipeline.py --image photo_for_recon.jpg --query photo_to_pose.jpg
+Usage (your own image(s)):
+    python run_single_view_pipeline.py --image path/to/photo.jpg --query path/to/photo.jpg
+    python run_single_view_pipeline.py --image recon_photo.jpg --query photo1.jpg photo2.jpg
 """
 import argparse
 import os
 
 import config
-from pipeline_common import run_pose_and_visualize
+from pipeline_common import run_official_foundpose
 from single_view_recon import reconstruct_single_view
+
+DEFAULT_IMAGES = ["data/starsat/starsat.jpeg", "data/starsat/starsat1.jpeg",
+                   "data/starsat/starsat2.jpeg", "data/starsat/starsat3.jpeg",
+                   "data/starsat/starsat4.jpeg"]
 
 
 def main():
@@ -23,23 +32,19 @@ def main():
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", default="data/starsat/starsat.jpeg",
                          help="photo to reconstruct a 3D mesh from")
-    parser.add_argument("--query", default=None,
-                         help="photo to estimate pose on (defaults to --image)")
-    parser.add_argument("--out-dir", default=None,
-                         help="output directory (defaults to output/<image name>)")
-    parser.add_argument("--num-templates", type=int, default=config.NUM_TEMPLATES)
-    parser.add_argument("--skip-recon", action="store_true",
-                         help="reuse an existing mesh instead of reconstructing")
-    parser.add_argument("--skip-render", action="store_true",
-                         help="reuse existing rendered templates")
-    parser.add_argument("--skip-repr", action="store_true",
-                         help="reuse an existing object representation")
+    parser.add_argument("--query", nargs="+", default=None,
+                         help="photo(s) to estimate pose on (defaults to all 5 starsat photos)")
+    parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--skip-recon", action="store_true")
+    parser.add_argument("--skip-templates", action="store_true",
+                         help="reuse an existing template bank + representation")
     args = parser.parse_args()
 
     stem = os.path.splitext(os.path.basename(args.image))[0]
-    out_dir = args.out_dir or os.path.join(config.OUTPUT_DIR, stem)
+    out_dir = os.path.abspath(args.out_dir or os.path.join(config.OUTPUT_DIR, stem))
+    os.makedirs(out_dir, exist_ok=True)
     mesh_path = os.path.join(out_dir, f"{stem}_mesh.glb")
-    query_path = args.query or args.image
+    query_images = args.query or DEFAULT_IMAGES
 
     if not args.skip_recon:
         print(f"== single-view reconstruction from {args.image} ==")
@@ -47,8 +52,7 @@ def main():
     else:
         print(f"== skipping reconstruction, reusing {mesh_path} ==")
 
-    run_pose_and_visualize(mesh_path, query_path, out_dir, num_templates=args.num_templates,
-                            skip_render=args.skip_render, skip_repr=args.skip_repr)
+    run_official_foundpose(mesh_path, query_images, out_dir, skip_templates=args.skip_templates)
 
 
 if __name__ == "__main__":

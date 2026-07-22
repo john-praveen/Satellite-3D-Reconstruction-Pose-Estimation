@@ -5,24 +5,34 @@ Given photo(s) of an object, this pipeline does two things:
    single/multi-image-to-3D model), from either **one photo** or **three photos**
    (front/back/left, which generally gives a more accurate mesh).
 2. **Pose estimation** — given that mesh and a photo, estimates the object's **rotation**
-   in the photo. **Two engines are available, run through the same mask-overlay visual
-   check:**
-   - `run_official_pipeline.py` — runs the ACTUAL [FoundPose](https://github.com/facebookresearch/foundpose)
-     (ECCV 2024) repo (rendering, DINOv2 matching via their "cyclic buddies" correspondence
-     filter, PnP-RANSAC), wired up automatically against your object. **Recommended** —
-     gave the tightest, most consistent results in testing (see `Known limitations` below).
-     Needs a second conda environment (the official repo's own dependency stack) — see
-     "Official pipeline setup".
-   - `run_single_view_pipeline.py` / `run_multiview_pipeline.py` — a lighter, from-scratch
-     reimplementation of the same algorithm (`foundpose_lite/`) that only needs the one
-     environment from step 1. Faster to set up, but was less consistently accurate in
-     testing than the official pipeline above.
+   in the photo, using the **ACTUAL official [FoundPose](https://github.com/facebookresearch/foundpose)**
+   (ECCV 2024) repo — rendering, DINOv2 matching via its "cyclic buddies" correspondence
+   filter, PnP-RANSAC — wired up automatically against your reconstructed object. There is
+   no separate from-scratch reimplementation of the algorithm here: this repo's job is
+   just to build a mesh, package it as a minimal fake BOP dataset the official repo can
+   consume (`foundpose_official/build_bop_dataset.py`), shell out to its actual
+   `gen_templates.py` / `gen_repre.py` / `infer.py`, and render a mask+axes visual check
+   on the resulting poses (`pipeline_common.py`, `visualize.py`).
+   - `run_single_view_pipeline.py` — one photo in, pose estimated on that photo (or
+     others) against the resulting mesh.
+   - `run_multiview_pipeline.py` — three (or four, with an optional right view) photos
+     in, for a more complete reconstruction; pose estimated the same way against the
+     resulting mesh.
+   - `run_pipeline.py` — a single interactive entry point wrapping both of the above:
+     asks "single or multi view?" in the terminal (or skips the prompt if pre-set),
+     then everything else (photo paths, camera intrinsics, where query photos come
+     from, whether to render visualizations) comes from `config.py` instead of CLI
+     flags. **Recommended if you're handing this project to someone else** — see
+     section 2 below.
+
+   All three need a second conda environment (the official FoundPose repo's own
+   dependency stack) — see "Official pipeline setup" below.
 
 **Important limitation up front:** the reconstructed mesh is not metrically scaled to the
 real object's true size. That means the estimated **rotation is the trustworthy output**;
 the estimated **translation/distance is not** (there's no way to recover true scale from
-a single photo without a calibrated stereo setup or known object dimensions). Every
-script in this repo reflects that — translation is reported but flagged as unreliable.
+a photo without a calibrated stereo setup or known object dimensions). Every script in
+this repo reflects that — translation is reported but flagged as unreliable.
 
 ## 1. Setup
 
@@ -65,7 +75,7 @@ or edit the default at the top of `config.py`.
 First run of any reconstruction script downloads the Hunyuan3D-2 model weights from
 Hugging Face automatically (~10-25GB depending on which model, one-time).
 
-### Official pipeline setup (needed for `run_official_pipeline.py`)
+### Official pipeline setup (needed for both `run_single_view_pipeline.py` and `run_multiview_pipeline.py`)
 
 The official FoundPose repo's dependencies (a pinned older PyTorch, `faiss`, `kornia`,
 specific `pyrender`/`OpenGL` versions) don't mix cleanly with Hunyuan3D-2's, so it needs
@@ -83,56 +93,87 @@ at this scale, it's just k-means/kNN over a few thousand vectors. `xformers` is 
 too — it's an optional DINOv2 speedup, not a hard requirement, and the pinned version
 doesn't line up with a newer CUDA toolchain.)
 
-Then set two things so `run_official_pipeline.py` can find it — either environment
-variables or the defaults in `config.py`:
+Then set two things so the pipelines can find it — either environment variables or the
+defaults in `config.py`:
 ```
 set FOUNDPOSE_OFFICIAL_REPO_PATH=D:\path\to\foundpose
 set FOUNDPOSE_OFFICIAL_CONDA_ENV=foundpose_repo
 ```
 
-`run_official_pipeline.py` itself still runs in your main `satpose` environment (from
-step b/c/d above) — it shells out to `foundpose_repo` only for the 3 official-algorithm
-steps (template rendering, representation building, inference), then comes back to the
-main environment for reconstruction and the mask+axes visualization. You don't run it
-from inside `foundpose_repo` yourself.
+`run_single_view_pipeline.py` / `run_multiview_pipeline.py` themselves still run in your
+main `satpose` environment (from step b/c/d above) — they shell out to `foundpose_repo`
+only for the 3 official-algorithm steps (template rendering, representation building,
+inference), then come back to the main environment for reconstruction and the mask+axes
+visualization. You don't run them from inside `foundpose_repo` yourself.
 
-## 2. Quick start — try the included example
+## 2. The interactive pipeline (`run_pipeline.py`) — recommended for handoff
 
+If you don't want to remember CLI flags (`--image`, `--front`, `--query`, etc.), use
+`run_pipeline.py` instead of `run_single_view_pipeline.py`/`run_multiview_pipeline.py`
+directly. It's a thin wrapper around the same underlying code — everything is configured
+by editing variables in `config.py` instead:
 ```
-python run_official_pipeline.py
+python run_pipeline.py
 ```
-Reconstructs a mesh from `data/starsat/starsat.jpeg` and estimates pose on **all 5**
-included starsat photos (that's the default query set for this script — pass `--query`
-to override), saving results under `output/starsat_official/`. Open any
-`*_mask_axes.png` there — see "Reading the output" below for how to judge it.
+It asks one question in the terminal (unless pre-answered, see below):
+```
+Single view or multi view? [s/m]:
+```
+then reconstructs (printing a progress spinner while Hunyuan3D-2 works, which also
+prints its own step-by-step progress underneath), estimates pose, and reports where
+everything was saved.
 
-Prefer the lighter/faster single-environment path instead? Use:
+**Everything else lives in `config.py`, under "run_pipeline.py":**
+- `PIPELINE_MODE` — set to `"single"` or `"multi"` to skip the terminal prompt entirely
+  (e.g. for a scripted/scheduled run); leave `None` to be asked each time.
+- `SINGLE_VIEW_IMAGE` — the one reconstruction photo, for single-view mode.
+- `FRONT_IMAGE` / `BACK_IMAGE` / `LEFT_IMAGE` / `RIGHT_IMAGE` — reconstruction photos for
+  multi-view mode. `RIGHT_IMAGE` is optional (`None` to reconstruct from just 3 views).
+- `QUERY_SOURCE` — what to estimate pose on. Leave `None` to default to the
+  reconstruction photo(s) themselves, or set it to:
+  - a single photo path, or a list of photo paths
+  - a **folder** path — every image file inside it is used (non-recursive)
+  - a **video file** path (`.mp4`/`.avi`/`.mov`/`.mkv`/…) — frames are extracted first
+    (see `VIDEO_FRAME_STRIDE`: `1` = every frame, `5` = every 5th frame, etc.), one query
+    photo per extracted frame
+- `SAVE_MASK` / `SAVE_AXES` — turn off either (or both) to skip rendering those
+  visualization images — useful for large batches (a folder or video with many frames)
+  where you only want the numbers quickly. Estimated poses are **always** saved
+  regardless, as both JSON and CSV.
+- `CAMERA_K` / `IMAGE_WIDTH` / `IMAGE_HEIGHT` — same camera intrinsics setting used
+  everywhere else (see "Adjusting parameters" below) — every query photo (including
+  every extracted video frame) must match this resolution, checked automatically before
+  any work starts.
+
+**Output**, under `output/<name>/` same as the CLI scripts:
+- `estimated_poses.csv` — one row per query photo: filename, rotation (both a flattened
+  3x3 matrix and a quaternion), translation, inlier count, match score.
+- `bop_datasets/outputs/inference/custom_v1/1/estimated-poses.json` — the raw official
+  FoundPose output the CSV is derived from.
+- `*_mask.png` / `*_mask_axes.png` (or just `*_axes.png` if `SAVE_MASK` is off) — per
+  "Reading the output" below, unless disabled via `SAVE_MASK`/`SAVE_AXES`.
+
+## 3. Quick start — try the included example
+
 ```
 python run_single_view_pipeline.py
 ```
-which does the same thing against `foundpose_lite/`, saving to `output/starsat/`.
+Reconstructs a mesh from `data/starsat/starsat.jpeg` and estimates pose on **all 5**
+included starsat photos (that's the default query set for this script — pass `--query`
+to override), saving results under `output/starsat/`. Open any `*_mask_axes.png` there —
+see "Reading the output" below for how to judge it.
 
-## 3. Running on your own data
+## 4. Running on your own data
 
-### Official pipeline (recommended)
+### Single-view (one photo)
 ```
-python run_official_pipeline.py --image path/to/recon_photo.jpg --query path/to/pose_photo.jpg
+python run_single_view_pipeline.py --image path/to/recon_photo.jpg --query path/to/pose_photo.jpg
 ```
 `--query` accepts multiple photos (`--query a.jpg b.jpg c.jpg`) — all get pose-estimated
 against the one reconstructed mesh in a single run, which is much cheaper than
 reconstructing/re-templating per photo. `--skip-recon` reuses an existing mesh;
 `--skip-templates` reuses an existing template bank + representation (both cached under
-`output/<name>_official/`).
-
-### Fast/single-environment pipeline
-#### Single-view (one photo)
-```
-python run_single_view_pipeline.py --image path/to/your_photo.jpg
-```
-Optionally estimate pose on a *different* photo than the one used to build the mesh:
-```
-python run_single_view_pipeline.py --image recon_photo.jpg --query pose_photo.jpg
-```
+`output/<name>/`).
 
 ### Multi-view (three photos: front/back/left)
 Generally more accurate than single-view, since the reconstruction gets real geometric
@@ -140,39 +181,49 @@ constraints from 3 real vantage points instead of guessing occluded geometry fro
 ```
 python run_multiview_pipeline.py --front front.jpg --back back.jpg --left left.jpg
 ```
-No multiview example data is included — the 5 starsat photos are independent single
-views, not a matched front/back/left triplet.
+By default, pose is estimated on the same `--front`/`--back`/`--left` triplet used for
+reconstruction; pass `--query` to estimate pose on different or additional photos
+instead:
+```
+python run_multiview_pipeline.py --front front.jpg --back back.jpg --left left.jpg \
+    --query front.jpg extra_photo.jpg
+```
+Results save under `output/<front image name>_multiview/`. No multiview example data is
+included — the 5 starsat photos are independent single views, not a matched
+front/back/left triplet.
 
 ### Re-running without redoing expensive steps
 Each pipeline caches its outputs under `output/<name>/`. Skip steps you don't need to redo:
 ```
-python run_single_view_pipeline.py --skip-recon --skip-render --skip-repr --query new_photo.jpg
+python run_single_view_pipeline.py --skip-recon --skip-templates --query new_photo.jpg
 ```
-`--skip-recon` reuses the existing mesh, `--skip-render`/`--skip-repr` reuse the existing
-rendered template bank and DINOv2 representation — useful if you just want to test a
-*different photo* of the *same already-reconstructed* object.
+`--skip-recon` reuses the existing mesh; `--skip-templates` reuses the existing BOP
+dataset, rendered template bank, and object representation — useful if you just want to
+test a *different photo* of the *same already-reconstructed* object.
 
-## 4. Adjusting parameters
+## 5. Adjusting parameters
 
-Everything tunable lives in **`config.py`**, with comments explaining each:
-- `CAMERA_K` / `IMAGE_WIDTH` / `IMAGE_HEIGHT` — camera intrinsics for your photos. Defaults
-  to a generic guess (`fx=fy=image width`, principal point centered) if you don't have real
-  calibration. **If you have real calibration (phone EXIF, known lens spec), use it** —
-  see "Known limitations" below for why this matters more than it might seem.
-- `NUM_TEMPLATES` — speed/accuracy tradeoff for the template bank. 300 for a fast check,
-  800 (default) for better accuracy. Roughly linear in render time (~2-3s per template).
-- `MATCH_TOP_K_BUDDIES` — how many of the most self-consistent correspondences to keep
-  before running PnP-RANSAC (a "cyclic buddies" filter ported from FoundPose's own
-  matching code). **This mattered more than any other single parameter during testing.**
-  It only works as a filter if it's smaller than your actual foreground patch count —
-  watch the console output for the "N foreground patches" line and keep this comfortably
-  below that number.
-- `DINO_MODEL` / `DINO_LAYER` — which DINOv2 backbone to use for feature matching.
-  Default (`vitl14_reg`, layer 18) is the paper's best-reported config; `vits14_reg` /
-  layer 9 is smaller and faster if you're iterating quickly.
-- Everything else (PCA dimension, cluster count, PnP settings) rarely needs changing.
+- **`config.py`** — `CAMERA_K` / `IMAGE_WIDTH` / `IMAGE_HEIGHT`, the camera intrinsics for
+  your photos. Defaults to a generic guess (`fx=fy=image width`, principal point
+  centered) if you don't have real calibration. **If you have real calibration (phone
+  EXIF, known lens spec), use it** — see "Known limitations" below for why this matters
+  more than it might seem. Also `FOUNDPOSE_OFFICIAL_REPO_PATH` / `FOUNDPOSE_OFFICIAL_CONDA_ENV`
+  (see "Official pipeline setup" above).
+- **`foundpose_official/configs/{gen_templates,gen_repre,infer}/custom.json`** — every
+  other tunable (template-bank size/coverage, DINOv2 backbone/layer, matching, PnP-RANSAC
+  settings) is the official repo's own config, passed straight through via `--opts-path`.
+  Notable ones:
+  - `gen_templates/custom.json`: `min_num_viewpoints` / `num_inplane_rotations` control
+    template-bank size (SO(3) coverage) — more = better coverage but linearly slower to
+    render. `ssaa_factor` is turned down from the official default of `4.0` to `1.0` here
+    — an ~12x speedup with no visible accuracy loss in testing.
+  - `infer/custom.json`: `extractor_name` selects the DINOv2 backbone/layer (paper default
+    is `vitl14_reg` layer 18; the included config uses the smaller/faster `vits14_reg`
+    layer 9). `match_top_k_buddies` is the "cyclic buddies" correspondence filter size —
+    keep it meaningfully smaller than your typical foreground patch count for it to
+    actually filter anything.
 
-## 5. Reading the output
+## 6. Reading the output
 
 Each run saves `<name>_mask_axes.png`: the reconstructed mesh, re-rendered at the
 estimated pose and overlaid on your photo (cyan fill + contour = the mesh's projected
@@ -185,23 +236,16 @@ trust the numbers in the JSON output:**
 - If the cyan silhouette is a **different shape, offset, or rotated relative to** the
   real object → the pose estimate is wrong for that photo. Don't trust it.
 
-## 6. Known limitations (from testing on real photos)
+## 7. Known limitations (from testing on real photos)
 
 - **Always check the mask overlay yourself, critically — never trust the numbers alone.**
-  The `foundpose_lite` (fast) pipeline was inconsistent in testing (5 photos of one
-  object): roughly 3 out of 5 gave visibly correct poses, and a `MATCH_TOP_K_BUDDIES`
-  filter tweak that looked at first like it fixed the other 2 turned out, on a proper
-  A/B test, to pick the identical template/pose as plain matching there — it wasn't
-  actually a fix, just a coincidence in how it first looked. The `run_official_pipeline.py`
-  path (actual FoundPose algorithm, lower template resolution for speed) then gave
-  visibly tight, correct results on **all 5** of the same test photos, including the 2
-  that were failing before. That's still a single small test, not a validated benchmark,
-  and it's *why* the official pipeline is the recommended default above — but "always
-  check the mask, don't assume success" still applies regardless of which engine you use.
-  Symmetric, flat objects are especially prone to a *wrong* rotation still producing a
-  plausible-looking silhouette by coincidence (a flat panel looks roughly like a flat
-  panel from many angles) — check whether edges and internal detail actually line up,
-  not just the rough outline shape.
+  In testing (5 photos of one object), the official FoundPose algorithm (this repo's only
+  pose engine, lower template resolution for speed) gave visibly tight, correct results on
+  **all 5** test photos. That's still a single small test, not a validated benchmark —
+  "always check the mask, don't assume success" still applies. Symmetric, flat objects are
+  especially prone to a *wrong* rotation still producing a plausible-looking silhouette by
+  coincidence (a flat panel looks roughly like a flat panel from many angles) — check
+  whether edges and internal detail actually line up, not just the rough outline shape.
 - **Texture-less, symmetric objects are much harder.** An object with real surface detail
   (panel seams, visible components, asymmetric shape) matches far better than a flat,
   featureless, symmetric one — DINOv2 needs *something* locally distinctive to match on.
@@ -216,18 +260,19 @@ trust the numbers in the JSON output:**
   done by eye via the mask overlay, not a formal benchmark. Treat it as a working
   research prototype, not a validated production system.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 - **On Linux (headless server, no display):** set `PYOPENGL_PLATFORM=egl` in your shell
-  *before* running any script that renders (anything that imports `pyrender`/`foundpose_lite`).
+  *before* running any script that renders (anything that imports `pyrender`/`visualize.py`).
 - **First run is slow / seems stuck:** it's downloading model weights (several GB) —
   check your network, it only happens once.
-- **Out of GPU memory:** reduce `NUM_TEMPLATES` in `config.py`, or switch `DINO_MODEL` to
-  `dinov2_vits14_reg` (smaller backbone).
-- **`run_official_pipeline.py` fails with a path/"Unknown BOP dataset" error:** check
+- **Out of GPU memory:** reduce `min_num_viewpoints` / `num_inplane_rotations` in
+  `foundpose_official/configs/gen_templates/custom.json`, or switch `extractor_name` in
+  `infer/custom.json` to a smaller DINOv2 backbone.
+- **Pipeline fails with a path/"Unknown BOP dataset" error:** check
   `FOUNDPOSE_OFFICIAL_REPO_PATH` actually points at the folder *containing* `scripts/`
   (i.e. where you ran `git clone`), and that `conda activate foundpose_repo && python -c
   "import torch, faiss, pyrender"` succeeds with no errors in that environment.
-- **`run_official_pipeline.py` fails with `FileNotFoundError` on `dataset_meta.json`:**
-  usually a relative-path issue if you passed a relative `--out-dir` — use an absolute
-  path, or leave `--out-dir` unset to use the (already-absolute) default.
+- **Pipeline fails with `FileNotFoundError` on `dataset_meta.json`:** usually a
+  relative-path issue if you passed a relative `--out-dir` — use an absolute path, or
+  leave `--out-dir` unset to use the (already-absolute) default.

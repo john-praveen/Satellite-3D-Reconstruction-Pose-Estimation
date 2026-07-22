@@ -1,44 +1,11 @@
+"""Visualization helpers shared by the single-view and multi-view pipelines: render the
+reconstructed mesh at an estimated pose and overlay it on the real photo, so the result
+can be sanity-checked by eye (see README.md "Reading the output").
+"""
 import numpy as np
 import pyrender
 import trimesh
 from PIL import Image, ImageDraw
-
-BOX_EDGES = [
-    (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face
-    (4, 5), (5, 6), (6, 7), (7, 4),  # top face
-    (0, 4), (1, 5), (2, 6), (3, 7),  # verticals
-]
-
-
-def obb_corners_object_space(mesh_path: str, mesh_centroid: np.ndarray) -> np.ndarray:
-    mesh = trimesh.load(mesh_path, force="mesh")
-    obb = mesh.bounding_box_oriented
-    corners = obb.vertices - mesh_centroid  # same centered frame used during template rendering
-    return corners
-
-
-def draw_wireframe(raw_image_path: str, mesh_path: str, mesh_centroid, R, t,
-                    camera_K: np.ndarray, out_path: str, color=(0, 255, 0), width=4):
-    """Draws the object's oriented bounding box, projected via the estimated pose. Quick
-    to compute, but a box looks similar under several wrong rotations (rotational
-    symmetry) -- prefer draw_axes or render_mask_overlay to actually judge correctness."""
-    corners = obb_corners_object_space(mesh_path, np.asarray(mesh_centroid))
-    R = np.asarray(R)
-    t = np.asarray(t).reshape(3)
-
-    cam_points = (R @ corners.T).T + t
-    pixels = (camera_K @ cam_points.T).T
-    pixels = pixels[:, :2] / pixels[:, 2:3]
-
-    img = Image.open(raw_image_path).convert("RGB")
-    draw = ImageDraw.Draw(img)
-    for a, b in BOX_EDGES:
-        pa, pb = tuple(pixels[a]), tuple(pixels[b])
-        draw.line([pa, pb], fill=color, width=width)
-
-    img.save(out_path)
-    return out_path
-
 
 # OpenCV (solvePnP) camera convention is X-right/Y-down/Z-forward-positive; pyrender/OpenGL
 # is X-right/Y-up/Z-backward-positive. Flipping Y and Z converts between them.
