@@ -26,7 +26,7 @@ Given photo(s) of an object, this pipeline does two things:
      section 2 below.
 
    All three need a second conda environment (the official FoundPose repo's own
-   dependency stack) — see "Official pipeline setup" below.
+   dependency stack). see "Official pipeline setup" below.
 
 **Important limitation up front:** the reconstructed mesh is not metrically scaled to the
 real object's true size. That means the estimated **rotation is the trustworthy output**;
