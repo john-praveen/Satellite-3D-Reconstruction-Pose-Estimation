@@ -1,7 +1,7 @@
 """3D reconstruction from ONE photo, using Hunyuan3D-2's single-image pipeline.
 
 Usage:
-    python single_view_recon.py --image data/starsat/starsat.jpeg --out output/starsat_mesh.glb
+    python -m satpose.reconstruction.single_view --image data/starsat/starsat.jpeg --out output/starsat_mesh.glb
 """
 import argparse
 import os
@@ -9,7 +9,7 @@ import sys
 
 from PIL import Image
 
-import config
+from satpose import config
 
 sys.path.insert(0, config.HY3DGEN_PATH)
 from hy3dgen.rembg import BackgroundRemover

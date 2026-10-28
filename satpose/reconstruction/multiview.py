@@ -7,9 +7,9 @@ hy3dgen/shapegen/preprocessors.py's MVImageProcessorV2.view2idx in the Hunyuan3D
 right is optional; the official examples only demonstrate 3.
 
 Usage:
-    python multiview_recon.py --front front.jpg --back back.jpg --left left.jpg \
+    python -m satpose.reconstruction.multiview --front front.jpg --back back.jpg --left left.jpg \
         --out output/mesh.glb
-    python multiview_recon.py --front front.jpg --back back.jpg --left left.jpg \
+    python -m satpose.reconstruction.multiview --front front.jpg --back back.jpg --left left.jpg \
         --right right.jpg --out output/mesh.glb
 """
 import argparse
@@ -18,7 +18,7 @@ import sys
 
 from PIL import Image
 
-import config
+from satpose import config
 
 sys.path.insert(0, config.HY3DGEN_PATH)
 from hy3dgen.rembg import BackgroundRemover

@@ -2,13 +2,13 @@
 prompt (single-view or multi-view) -- or pre-set config.PIPELINE_MODE to skip the
 prompt entirely -- and everything else (reconstruction photo(s), camera intrinsics,
 where query photos come from, whether to render mask/axes visualizations) comes
-straight from config.py. No CLI flags to remember; meant for handing this project
+straight from satpose/config.py. No CLI flags to remember; meant for handing this project
 off to someone who just wants to edit a few variables and run one script.
 
 Usage:
     python run_pipeline.py
 
-(For scripted/CLI use with flags instead of editing config.py, see
+(For scripted/CLI use with flags instead of editing satpose/config.py, see
 run_single_view_pipeline.py / run_multiview_pipeline.py -- run_pipeline.py is a
 thin, config-driven wrapper around the same underlying functions.)
 """
@@ -18,10 +18,10 @@ import sys
 import threading
 import time
 
-import config
-from multiview_recon import reconstruct_multiview
-from pipeline_common import resolve_query_images, run_official_foundpose
-from single_view_recon import reconstruct_single_view
+from satpose import config
+from satpose.reconstruction.multiview import reconstruct_multiview
+from satpose.pipeline import resolve_query_images, run_official_foundpose
+from satpose.reconstruction.single_view import reconstruct_single_view
 
 
 class _Spinner:
@@ -90,7 +90,7 @@ def main():
                    [("FRONT_IMAGE", front), ("BACK_IMAGE", back), ("LEFT_IMAGE", left)]
                    if not val]
         if missing:
-            raise ValueError(f"multi-view mode needs config.py's {', '.join(missing)} set "
+            raise ValueError(f"multi-view mode needs satpose/config.py's {', '.join(missing)} set "
                               f"(RIGHT_IMAGE is optional)")
         stem = os.path.splitext(os.path.basename(front))[0]
         out_dir = os.path.abspath(os.path.join(config.OUTPUT_DIR, f"{stem}_multiview"))
@@ -105,7 +105,7 @@ def main():
         config.QUERY_SOURCE, out_dir, config.VIDEO_FRAME_STRIDE) or recon_sources
 
     print(f"== estimating pose on {len(query_images)} photo(s), using CAMERA_K from "
-          f"config.py ==")
+          f"satpose/config.py ==")
     run_official_foundpose(mesh_path, query_images, out_dir,
                             save_mask=config.SAVE_MASK, save_axes=config.SAVE_AXES)
 
@@ -114,7 +114,7 @@ def main():
     if config.SAVE_MASK or config.SAVE_AXES:
         print(f"  - *_mask.png / *_mask_axes.png -- ALWAYS check these before trusting a pose")
     else:
-        print(f"  - (SAVE_MASK/SAVE_AXES are both off in config.py -- no visualization images "
+        print(f"  - (SAVE_MASK/SAVE_AXES are both off in satpose/config.py -- no visualization images "
               f"were rendered, only the CSV/JSON numbers)")
 
 

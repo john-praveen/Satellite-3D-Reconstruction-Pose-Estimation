@@ -1,7 +1,7 @@
 """Full multi-view pipeline using the ACTUAL official FoundPose (facebookresearch/foundpose,
 ECCV 2024) algorithm: three or four photos (front/back/left, optionally +right) -> 3D
 reconstruction (Hunyuan3D-2 multi-view) -> pose estimation (the official repo's rendering,
-DINOv2 matching, PnP-RANSAC, run in its own conda env -- see pipeline_common.py) ->
+DINOv2 matching, PnP-RANSAC, run in its own conda env -- see satpose/pipeline.py) ->
 mask+axes visualization. Multi-view reconstruction is generally more accurate than
 single-view, since the mesh gets real geometric constraints from multiple real vantage
 points instead of guessing occluded geometry from one photo.
@@ -28,9 +28,9 @@ Usage (estimate pose on different/additional photos than the recon set):
 import argparse
 import os
 
-import config
-from multiview_recon import reconstruct_multiview
-from pipeline_common import run_official_foundpose
+from satpose import config
+from satpose.reconstruction.multiview import reconstruct_multiview
+from satpose.pipeline import run_official_foundpose
 
 
 def main():

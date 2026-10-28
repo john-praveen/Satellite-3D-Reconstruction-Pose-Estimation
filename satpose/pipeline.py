@@ -16,9 +16,9 @@ import sys
 import numpy as np
 from PIL import Image
 
-import config
-from foundpose_official.build_bop_dataset import build_custom_bop_dataset
-from visualize import draw_axes, render_mask_overlay
+from satpose import config
+from satpose.foundpose_official.build_bop_dataset import build_custom_bop_dataset
+from satpose.visualize import draw_axes, render_mask_overlay
 
 sys.path.insert(0, config.HY3DGEN_PATH)
 from hy3dgen.rembg import BackgroundRemover
@@ -188,12 +188,12 @@ def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
         expected_size = (config.IMAGE_WIDTH, config.IMAGE_HEIGHT)
         if actual_size != expected_size:
             raise ValueError(
-                f"{q} is {actual_size[0]}x{actual_size[1]}, but config.py's "
+                f"{q} is {actual_size[0]}x{actual_size[1]}, but satpose/config.py's "
                 f"IMAGE_WIDTH/IMAGE_HEIGHT is set to {expected_size[0]}x{expected_size[1]}. "
                 f"CAMERA_K is derived from those, so a mismatch feeds wrong intrinsics into "
                 f"the official pipeline (not just the mask+axes visualization) -- update "
                 f"IMAGE_WIDTH/IMAGE_HEIGHT (and CAMERA_K, unless you're using real "
-                f"calibration for this exact resolution) in config.py to match your photos "
+                f"calibration for this exact resolution) in satpose/config.py to match your photos "
                 f"before running.")
 
     nobg_paths = []

@@ -10,9 +10,9 @@ Given photo(s) of an object, this pipeline does two things:
    filter, PnP-RANSAC — wired up automatically against your reconstructed object. There is
    no separate from-scratch reimplementation of the algorithm here: this repo's job is
    just to build a mesh, package it as a minimal fake BOP dataset the official repo can
-   consume (`foundpose_official/build_bop_dataset.py`), shell out to its actual
+   consume (`satpose/foundpose_official/build_bop_dataset.py`), shell out to its actual
    `gen_templates.py` / `gen_repre.py` / `infer.py`, and render a mask+axes visual check
-   on the resulting poses (`pipeline_common.py`, `visualize.py`).
+   on the resulting poses (`satpose/pipeline.py`, `satpose/visualize.py`).
    - `run_single_view_pipeline.py` — one photo in, pose estimated on that photo (or
      others) against the resulting mesh.
    - `run_multiview_pipeline.py` — three (or four, with an optional right view) photos
@@ -21,7 +21,7 @@ Given photo(s) of an object, this pipeline does two things:
    - `run_pipeline.py` — a single interactive entry point wrapping both of the above:
      asks "single or multi view?" in the terminal (or skips the prompt if pre-set),
      then everything else (photo paths, camera intrinsics, where query photos come
-     from, whether to render visualizations) comes from `config.py` instead of CLI
+     from, whether to render visualizations) comes from `satpose/config.py` instead of CLI
      flags. **Recommended if you're handing this project to someone else** — see
      section 2 below.
 
@@ -33,6 +33,31 @@ real object's true size. That means the estimated **rotation is the trustworthy 
 the estimated **translation/distance is not** (there's no way to recover true scale from
 a photo without a calibrated stereo setup or known object dimensions). Every script in
 this repo reflects that — translation is reported but flagged as unreliable.
+
+## Project layout
+
+```
+.
+├── run_pipeline.py               # interactive entry point (settings from satpose/config.py)
+├── run_single_view_pipeline.py   # CLI entry point: one photo -> mesh -> pose
+├── run_multiview_pipeline.py     # CLI entry point: 3-4 photos -> mesh -> pose
+├── requirements.txt
+├── data/
+│   └── starsat/                  # example photos
+└── satpose/                      # library code
+    ├── config.py                 # all user-tunable settings (paths, camera intrinsics, run options)
+    ├── pipeline.py               # query resolution, FoundPose subprocess calls, CSV/overlay output
+    ├── visualize.py              # mask + axes overlay rendering
+    ├── reconstruction/
+    │   ├── single_view.py        # Hunyuan3D-2, one image -> mesh
+    │   └── multiview.py          # Hunyuan3D-2, front/back/left(/right) -> mesh
+    └── foundpose_official/
+        ├── build_bop_dataset.py  # packages mesh + photos as a minimal BOP dataset
+        └── configs/              # gen_templates / gen_repre / infer settings for FoundPose
+```
+
+Run all scripts from the repository root (`output/` and the `data/...` defaults are
+relative to it).
 
 ## 1. Setup
 
@@ -70,7 +95,7 @@ pip install -r requirements.txt
 ```
 set HY3DGEN_PATH=D:\path\to\Hunyuan3D-2
 ```
-or edit the default at the top of `config.py`.
+or edit the default at the top of `satpose/config.py`.
 
 First run of any reconstruction script downloads the Hunyuan3D-2 model weights from
 Hugging Face automatically (~10-25GB depending on which model, one-time).
@@ -94,7 +119,7 @@ too — it's an optional DINOv2 speedup, not a hard requirement, and the pinned 
 doesn't line up with a newer CUDA toolchain.)
 
 Then set two things so the pipelines can find it — either environment variables or the
-defaults in `config.py`:
+defaults in `satpose/config.py`:
 ```
 set FOUNDPOSE_OFFICIAL_REPO_PATH=D:\path\to\foundpose
 set FOUNDPOSE_OFFICIAL_CONDA_ENV=foundpose_repo
@@ -111,7 +136,7 @@ visualization. You don't run them from inside `foundpose_repo` yourself.
 If you don't want to remember CLI flags (`--image`, `--front`, `--query`, etc.), use
 `run_pipeline.py` instead of `run_single_view_pipeline.py`/`run_multiview_pipeline.py`
 directly. It's a thin wrapper around the same underlying code — everything is configured
-by editing variables in `config.py` instead:
+by editing variables in `satpose/config.py` instead:
 ```
 python run_pipeline.py
 ```
@@ -123,7 +148,7 @@ then reconstructs (printing a progress spinner while Hunyuan3D-2 works, which al
 prints its own step-by-step progress underneath), estimates pose, and reports where
 everything was saved.
 
-**Everything else lives in `config.py`, under "run_pipeline.py":**
+**Everything else lives in `satpose/config.py`, under "run_pipeline.py":**
 - `PIPELINE_MODE` — set to `"single"` or `"multi"` to skip the terminal prompt entirely
   (e.g. for a scripted/scheduled run); leave `None` to be asked each time.
 - `SINGLE_VIEW_IMAGE` — the one reconstruction photo, for single-view mode.
@@ -203,13 +228,13 @@ test a *different photo* of the *same already-reconstructed* object.
 
 ## 5. Adjusting parameters
 
-- **`config.py`** — `CAMERA_K` / `IMAGE_WIDTH` / `IMAGE_HEIGHT`, the camera intrinsics for
+- **`satpose/config.py`** — `CAMERA_K` / `IMAGE_WIDTH` / `IMAGE_HEIGHT`, the camera intrinsics for
   your photos. Defaults to a generic guess (`fx=fy=image width`, principal point
   centered) if you don't have real calibration. **If you have real calibration (phone
   EXIF, known lens spec), use it** — see "Known limitations" below for why this matters
   more than it might seem. Also `FOUNDPOSE_OFFICIAL_REPO_PATH` / `FOUNDPOSE_OFFICIAL_CONDA_ENV`
   (see "Official pipeline setup" above).
-- **`foundpose_official/configs/{gen_templates,gen_repre,infer}/custom.json`** — every
+- **`satpose/foundpose_official/configs/{gen_templates,gen_repre,infer}/custom.json`** — every
   other tunable (template-bank size/coverage, DINOv2 backbone/layer, matching, PnP-RANSAC
   settings) is the official repo's own config, passed straight through via `--opts-path`.
   Notable ones:
@@ -263,11 +288,11 @@ trust the numbers in the JSON output:**
 ## 8. Troubleshooting
 
 - **On Linux (headless server, no display):** set `PYOPENGL_PLATFORM=egl` in your shell
-  *before* running any script that renders (anything that imports `pyrender`/`visualize.py`).
+  *before* running any script that renders (anything that imports `pyrender`/`satpose/visualize.py`).
 - **First run is slow / seems stuck:** it's downloading model weights (several GB) —
   check your network, it only happens once.
 - **Out of GPU memory:** reduce `min_num_viewpoints` / `num_inplane_rotations` in
-  `foundpose_official/configs/gen_templates/custom.json`, or switch `extractor_name` in
+  `satpose/foundpose_official/configs/gen_templates/custom.json`, or switch `extractor_name` in
   `infer/custom.json` to a smaller DINOv2 backbone.
 - **Pipeline fails with a path/"Unknown BOP dataset" error:** check
   `FOUNDPOSE_OFFICIAL_REPO_PATH` actually points at the folder *containing* `scripts/`

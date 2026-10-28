@@ -35,7 +35,7 @@ HY3DGEN_PATH = os.environ.get("HY3DGEN_PATH", r"D:\3D_recon\Hunyuan3D-2")
 #using camera intrinsics is the best way to get accurate pose estimation, but if you don't have them, the default values above will work reasonably well for many cases.
 #
 # IMPORTANT: these MUST match the actual pixel resolution of whatever photos
-# you're currently running through the pipeline -- pipeline_common.py checks
+# you're currently running through the pipeline -- satpose/pipeline.py checks
 # this at the start of every run and raises an error if a query photo's real
 # size doesn't match IMAGE_WIDTH/IMAGE_HEIGHT below, since a mismatch would
 # otherwise silently feed wrong intrinsics into the official FoundPose
@@ -60,12 +60,12 @@ CAMERA_K = np.array([
 # ============================================================================
 # The official FoundPose repo (facebookresearch/foundpose, ECCV 2024) does all
 # pose estimation (template rendering, DINOv2 matching, PnP-RANSAC) -- see
-# pipeline_common.py / run_single_view_pipeline.py / run_multiview_pipeline.py.
+# satpose/pipeline.py / run_single_view_pipeline.py / run_multiview_pipeline.py.
 # Needs the official repo cloned separately (README.md "Official pipeline
 # setup") plus its OWN conda env (different Python/deps than the rest of this
 # pipeline), since its dependency stack doesn't mix cleanly with Hunyuan3D-2's.
 # Template-bank size, DINOv2 backbone, matching, and PnP parameters are all
-# tuned in foundpose_official/configs/*/custom.json instead of here. Notably,
+# tuned in satpose/foundpose_official/configs/*/custom.json instead of here. Notably,
 # ssaa_factor in configs/gen_templates/custom.json is turned down from the
 # official default of 4.0 to 1.0 -- this was an ~12x speedup (30min -> 2.5min
 # for 800 templates) with no visible accuracy loss in testing.

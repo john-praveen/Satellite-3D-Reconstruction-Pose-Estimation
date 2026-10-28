@@ -1,8 +1,8 @@
-# Install these on top of Hunyuan3D-2's own requirements (see README.md step 2).
+# Install these on top of Hunyuan3D-2's own requirements (see README.md Setup, step c).
 # torch itself is not listed here -- it gets installed as part of the Hunyuan3D-2 setup.
-# This covers reconstruction glue (single_view_recon.py/multiview_recon.py),
-# foundpose_official/build_bop_dataset.py, and the mask+axes visualization
-# (visualize.py) used by run_single_view_pipeline.py / run_multiview_pipeline.py. The
+# This covers reconstruction glue (satpose/reconstruction/single_view.py + multiview.py),
+# satpose/foundpose_official/build_bop_dataset.py, and the mask+axes visualization
+# (satpose/visualize.py) used by run_single_view_pipeline.py / run_multiview_pipeline.py. The
 # official FoundPose algorithm itself (gen_templates/gen_repre/infer) needs its OWN
 # separate environment -- see README.md "Official pipeline setup".
 pyrender

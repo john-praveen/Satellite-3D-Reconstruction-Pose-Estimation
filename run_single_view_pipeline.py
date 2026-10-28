@@ -1,8 +1,8 @@
 """Full single-view pipeline using the ACTUAL official FoundPose (facebookresearch/foundpose,
 ECCV 2024) algorithm: one photo -> 3D reconstruction (Hunyuan3D-2) -> pose estimation
 (the official repo's rendering, DINOv2 matching via its "cyclic buddies" correspondence
-filter, PnP-RANSAC, run in its own conda env -- see foundpose_official/build_bop_dataset.py
-and pipeline_common.py) -> mask+axes visualization.
+filter, PnP-RANSAC, run in its own conda env -- see satpose/foundpose_official/build_bop_dataset.py
+and satpose/pipeline.py) -> mask+axes visualization.
 
 Needs TWO conda environments (this pipeline's own env, and a separate one for the
 official repo -- their dependency stacks don't mix). See README.md "Official pipeline
@@ -18,9 +18,9 @@ Usage (your own image(s)):
 import argparse
 import os
 
-import config
-from pipeline_common import run_official_foundpose
-from single_view_recon import reconstruct_single_view
+from satpose import config
+from satpose.pipeline import run_official_foundpose
+from satpose.reconstruction.single_view import reconstruct_single_view
 
 DEFAULT_IMAGES = ["data/starsat/starsat.jpeg", "data/starsat/starsat1.jpeg",
                    "data/starsat/starsat2.jpeg", "data/starsat/starsat3.jpeg",
