@@ -41,13 +41,22 @@ this repo reflects that — translation is reported but flagged as unreliable.
 ├── run_pipeline.py               # interactive entry point (settings from satpose/config.py)
 ├── run_single_view_pipeline.py   # CLI entry point: one photo -> mesh -> pose
 ├── run_multiview_pipeline.py     # CLI entry point: 3-4 photos -> mesh -> pose
+├── simulate_closed_loop.py       # runs the closed loop with fake stages (no GPU needed)
+├── verify_orientation.py         # checks the pose stage on a synthetic satellite with known poses
 ├── requirements.txt
 ├── data/
 │   └── starsat/                  # example photos
+├── tests/                        # unit tests for the closed-loop modules (no GPU needed)
 └── satpose/                      # library code
     ├── config.py                 # all user-tunable settings (paths, camera intrinsics, run options)
     ├── pipeline.py               # query resolution, FoundPose subprocess calls, CSV/overlay output
     ├── visualize.py              # mask + axes overlay rendering
+    ├── viewpoints.py             # Contribution 1: viewing directions, keyframes, Hunyuan view slots
+    ├── provenance.py             # Contribution 2: observed vs. hallucinated mesh, weighted pose refinement
+    ├── runtime.py                # Contribution 3: fast pose loop + background rebuild, atomic model swap
+    ├── metrics.py                # rotation / pointing / translation error
+    ├── synthetic.py              # box satellite, STL writer, numpy renderer, wireframe overlay
+    ├── verification.py           # generate / run / evaluate the synthetic orientation check
     ├── reconstruction/
     │   ├── single_view.py        # Hunyuan3D-2, one image -> mesh
     │   └── multiview.py          # Hunyuan3D-2, front/back/left(/right) -> mesh
@@ -58,6 +67,59 @@ this repo reflects that — translation is reported but flagged as unreliable.
 
 Run all scripts from the repository root (`output/` and the `data/...` defaults are
 relative to it).
+
+## Closed-loop modules (research contributions)
+
+On top of the baseline pipeline, three self-contained modules implement the research
+contributions. They need only `numpy` and `scipy`, take the reconstruction and pose back-ends
+as plain callables, and are covered by tests that run without a GPU.
+
+1. **Pose-guided closed loop** (`satpose/viewpoints.py`) — each estimated pose gives the
+   direction the camera sees the target from. `KeyframeSelector` keeps frames that show
+   a new side, and `assign_slots` maps them to Hunyuan3D-2mv's front / left / back / right inputs.
+2. **Observation-aware weighting** (`satpose/provenance.py`) — `ObservationMap` records which
+   mesh vertices a camera has really seen, gives guessed geometry a low trust weight, and
+   `refine_pose_weighted` uses those weights when polishing a pose from 2D-3D matches.
+3. **Dual-rate runtime** (`satpose/runtime.py`) — `ClosedLoopPipeline` estimates pose on every
+   frame against the current model while a background thread rebuilds the model from the
+   keyframes; the new model is swapped in atomically and a failed rebuild never stops tracking.
+
+```
+python -m unittest discover -s tests -v     # run the tests
+python simulate_closed_loop.py              # watch the loop run on a simulated fly-around
+```
+
+**Status.** The logic and the scheduling are tested on synthetic data. Not done yet:
+running the loop with the real Hunyuan3D-2mv and FoundPose (needs a GPU machine), feeding
+the trust weights into the official FoundPose `infer.py` (it does not export its
+2D-3D correspondences), and the ground-truth evaluation on SPE3R. Two assumptions to verify
+on real meshes: that the mesh's up axis is +Y (`viewpoints.DEFAULT_UP_AXIS`), and that a
+rebuilt mesh keeps the same object frame as the first one (the first keyframe is always the
+"front" view, which is what makes this likely, but it is not guaranteed).
+
+## Verifying the pose stage on a synthetic satellite
+
+`verify_orientation.py` checks the pose pipeline against ground truth. It builds a box-shaped
+satellite (an asymmetric one, so only one orientation matches each view), saves it as
+`satellite.stl`, renders 12 views at known poses, and draws wireframes of the true pose.
+Hunyuan3D is not involved: the STL itself is the mesh, so only FoundPose is tested.
+
+```
+python verify_orientation.py generate    # STL + renders + ground-truth wireframes (no GPU)
+python verify_orientation.py selftest    # report using FAKE estimates, to see what pass/fail looks like
+python verify_orientation.py run         # generate, run the real FoundPose on it, compare, draw overlays
+python verify_orientation.py evaluate    # re-compare an existing FoundPose result
+```
+
+Output goes to `output/synthetic_satellite/`:
+- `gt_contact_sheet.png` — the 12 views with the true wireframe (green).
+- `wireframe_eval/contact_sheet.png` — after `run`: true wireframe (green) and the wireframe at
+  the **estimated rotation** (red), with the rotation error per view. Red covering green means
+  the orientation is right. Only rotation is compared; the red wireframe uses the true translation.
+
+`run` needs the FoundPose setup from "Official pipeline setup" below. The renders are
+plain grey-shaded, like FoundPose's own templates, so this is a best case: if it fails here, the
+setup is wrong; if it passes, real photos are the next test.
 
 ## 1. Setup
 

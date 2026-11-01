@@ -18,23 +18,29 @@ from PIL import Image
 
 from satpose import config
 from satpose.foundpose_official.build_bop_dataset import build_custom_bop_dataset
+from satpose.foundpose_official.patch_bop_toolkit import apply as patch_bop_toolkit
 from satpose.visualize import draw_axes, render_mask_overlay
-
-sys.path.insert(0, config.HY3DGEN_PATH)
-from hy3dgen.rembg import BackgroundRemover
 
 _remover = None
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 _VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv")
 
 
-def remove_background(image_path: str, out_path: str):
+def _get_background_remover():
+    """Loads Hunyuan3D's background remover on first use, so importing this module does
+    not require the Hunyuan3D-2 repo (e.g. when cut-outs are supplied by the caller)."""
     global _remover
     if _remover is None:
+        sys.path.insert(0, config.HY3DGEN_PATH)
+        from hy3dgen.rembg import BackgroundRemover
         _remover = BackgroundRemover()
+    return _remover
+
+
+def remove_background(image_path: str, out_path: str):
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     image = Image.open(image_path).convert("RGB")
-    image_nobg = _remover(image)
+    image_nobg = _get_background_remover()(image)
     image_nobg.save(out_path)
     return out_path
 
@@ -149,6 +155,12 @@ def save_poses_csv(poses: list, query_images: list, out_dir: str):
     return csv_path
 
 
+def _conda_env_args(env: str) -> list:
+    """`-n <name>` for an environment name, `-p <path>` when `env` is a directory path."""
+    is_path = os.sep in env or "/" in env
+    return ["-p" if is_path else "-n", env]
+
+
 def _run_official_script(script_name: str, config_name: str, bop_root: str):
     env = os.environ.copy()
     env["REPO_PATH"] = config.FOUNDPOSE_OFFICIAL_REPO_PATH
@@ -160,7 +172,8 @@ def _run_official_script(script_name: str, config_name: str, bop_root: str):
     ])
     opts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "foundpose_official",
                               "configs", script_name.replace(".py", ""), f"{config_name}.json")
-    cmd = ["conda", "run", "-n", config.FOUNDPOSE_OFFICIAL_CONDA_ENV, "python",
+    cmd = [os.environ.get("CONDA_EXE", "conda"), "run", "--no-capture-output",
+           *_conda_env_args(config.FOUNDPOSE_OFFICIAL_CONDA_ENV), "python",
            os.path.join("scripts", script_name), "--opts-path", opts_path]
     print(f"== running official {script_name} ==")
     result = subprocess.run(cmd, cwd=config.FOUNDPOSE_OFFICIAL_REPO_PATH, env=env)
@@ -171,17 +184,24 @@ def _run_official_script(script_name: str, config_name: str, bop_root: str):
 
 def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
                             skip_templates: bool = False, save_mask: bool = True,
-                            save_axes: bool = True):
+                            save_axes: bool = True, nobg_paths: list = None):
     """End-to-end: remove the background from each query photo, build a minimal BOP
     dataset around `mesh_path`, run the official FoundPose repo's
     gen_templates.py -> gen_repre.py -> infer.py (in its own conda env), save the
     estimated poses (JSON + CSV), and -- unless disabled -- render a mask/axes
     visualization for each query photo. Returns the list of estimated poses
-    ({img_id, R, t, inliers_est, score}, one per query image)."""
+    ({img_id, R, t, inliers_est, score}, one per query image).
+
+    `nobg_paths`: optional RGBA cut-outs, one per query image and in the same order. When
+    given, the background-removal step is skipped (used for synthetic renders, which
+    already have an exact alpha mask)."""
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     query_images = [os.path.abspath(q) for q in query_images]
     bop_root = os.path.join(out_dir, "bop_datasets")
+
+    if patch_bop_toolkit(config.FOUNDPOSE_OFFICIAL_REPO_PATH):
+        print("== registered the 'custom' dataset in the FoundPose repo's bop_toolkit ==")
 
     for q in query_images:
         actual_size = Image.open(q).size
@@ -196,12 +216,15 @@ def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
                 f"calibration for this exact resolution) in satpose/config.py to match your photos "
                 f"before running.")
 
-    nobg_paths = []
-    for q in query_images:
-        q_stem = os.path.splitext(os.path.basename(q))[0]
-        nobg_path = os.path.join(out_dir, f"{q_stem}_nobg.png")
-        remove_background(q, nobg_path)
-        nobg_paths.append(nobg_path)
+    if nobg_paths is None:
+        nobg_paths = []
+        for q in query_images:
+            q_stem = os.path.splitext(os.path.basename(q))[0]
+            nobg_path = os.path.join(out_dir, f"{q_stem}_nobg.png")
+            remove_background(q, nobg_path)
+            nobg_paths.append(nobg_path)
+    elif len(nobg_paths) != len(query_images):
+        raise ValueError("nobg_paths must have one entry per query image")
 
     if not skip_templates:
         build_custom_bop_dataset(mesh_path, nobg_paths, query_images, config.CAMERA_K,

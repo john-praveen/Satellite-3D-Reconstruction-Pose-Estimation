@@ -69,14 +69,15 @@ CAMERA_K = np.array([
 # ssaa_factor in configs/gen_templates/custom.json is turned down from the
 # official default of 4.0 to 1.0 -- this was an ~12x speedup (30min -> 2.5min
 # for 800 templates) with no visible accuracy loss in testing.
-# As with HY3DGEN_PATH above, the fallback below is THIS machine's actual
-# clone location (note the nested \repo -- the outer foundpose/ folder also
-# has unrelated scratch files, the real `git clone` output is one level
-# deeper) -- change it or set the FOUNDPOSE_OFFICIAL_REPO_PATH env var for a
-# different setup.
+# As with HY3DGEN_PATH above, the fallbacks below are THIS machine's actual
+# locations -- change them or set the FOUNDPOSE_OFFICIAL_REPO_PATH /
+# FOUNDPOSE_OFFICIAL_CONDA_ENV env vars for a different setup. The env value is
+# an environment name, or a directory path (run with `conda run -p`); here the
+# environment lives on D: to keep C: free.
 # ============================================================================
-FOUNDPOSE_OFFICIAL_REPO_PATH = os.environ.get("FOUNDPOSE_OFFICIAL_REPO_PATH", r"D:\3D_recon\foundpose\repo")
-FOUNDPOSE_OFFICIAL_CONDA_ENV = os.environ.get("FOUNDPOSE_OFFICIAL_CONDA_ENV", "foundpose_repo")
+FOUNDPOSE_OFFICIAL_REPO_PATH = os.environ.get("FOUNDPOSE_OFFICIAL_REPO_PATH", r"D:\foundpose")
+FOUNDPOSE_OFFICIAL_CONDA_ENV = os.environ.get("FOUNDPOSE_OFFICIAL_CONDA_ENV",
+                                              r"D:\conda_envs\foundpose_repo")
 
 OUTPUT_DIR = "output"
 
