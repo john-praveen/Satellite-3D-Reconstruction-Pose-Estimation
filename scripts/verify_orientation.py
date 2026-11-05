@@ -1,10 +1,10 @@
 """Checks the pose pipeline end to end on a synthetic box satellite with known orientations.
 
 Steps (run them in order, or just `run`):
-    python verify_orientation.py generate    # satellite STL + 12 renders + ground-truth wireframes
-    python verify_orientation.py run         # generate, run FoundPose on it, compare, draw overlays
-    python verify_orientation.py evaluate    # compare an existing FoundPose result with truth
-    python verify_orientation.py selftest    # same report with FAKE estimates (no FoundPose needed)
+    python scripts/verify_orientation.py generate    # satellite STL + 12 renders + ground-truth wireframes
+    python scripts/verify_orientation.py run         # generate, run FoundPose on it, compare, draw overlays
+    python scripts/verify_orientation.py evaluate    # compare an existing FoundPose result with truth
+    python scripts/verify_orientation.py selftest    # same report with FAKE estimates (no FoundPose needed)
 
 Everything is written under output/synthetic_satellite/ (change with --out-dir). Open
 `gt_contact_sheet.png` to see the ground-truth wireframes, and `wireframe_eval/contact_sheet.png`
@@ -15,9 +15,12 @@ needed: the satellite's own STL is used as the mesh, so this tests the pose stag
 """
 import argparse
 import os
+import sys
 
-from satpose import config
-from satpose import verification as v
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+
+from satpose import config  # noqa: E402
+from satpose import verification as v  # noqa: E402
 
 
 def main() -> None:

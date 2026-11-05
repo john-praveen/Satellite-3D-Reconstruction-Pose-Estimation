@@ -6,18 +6,22 @@ selection, the background rebuild, the atomic model swap, and a fast loop that n
 waits -- not the accuracy of Hunyuan3D or FoundPose.
 
 Usage:
-    python simulate_closed_loop.py
-    python simulate_closed_loop.py --rebuild-seconds 5 --frames 120
+    python scripts/simulate_closed_loop.py
+    python scripts/simulate_closed_loop.py --rebuild-seconds 5 --frames 120
 """
 import argparse
+import os
+import sys
 import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from satpose.metrics import rotation_error_deg
-from satpose.runtime import ClosedLoopPipeline, PoseEstimate
-from satpose.viewpoints import KeyframeSelector
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+
+from satpose.metrics import rotation_error_deg  # noqa: E402
+from satpose.runtime import ClosedLoopPipeline, PoseEstimate  # noqa: E402
+from satpose.viewpoints import KeyframeSelector  # noqa: E402
 
 
 def pose_at_azimuth(azimuth_deg: float, elevation_deg: float = 10.0, distance: float = 2.0):

@@ -30,9 +30,11 @@ Given photo(s) of an object, this pipeline does two things:
 
 **Important limitation up front:** the reconstructed mesh is not metrically scaled to the
 real object's true size. That means the estimated **rotation is the trustworthy output**;
-the estimated **translation/distance is not** (there's no way to recover true scale from
-a photo without a calibrated stereo setup or known object dimensions). Every script in
-this repo reflects that — translation is reported but flagged as unreliable.
+the estimated **translation/distance is only as good as the mesh scale** (there's no way to
+recover true scale from a photo without a calibrated stereo setup or known object dimensions).
+With a mesh of known scale, as for the synthetic test objects, it is accurate to under 1% of
+the distance (see "Rotation and translation accuracy"); with a reconstructed mesh the scale is
+arbitrary, so treat translation as unreliable and rely on rotation.
 
 ## Project layout
 
@@ -41,12 +43,17 @@ this repo reflects that — translation is reported but flagged as unreliable.
 ├── run_pipeline.py               # interactive entry point (settings from satpose/config.py)
 ├── run_single_view_pipeline.py   # CLI entry point: one photo -> mesh -> pose
 ├── run_multiview_pipeline.py     # CLI entry point: 3-4 photos -> mesh -> pose
-├── simulate_closed_loop.py       # runs the closed loop with fake stages (no GPU needed)
-├── verify_orientation.py         # checks the pose stage on a synthetic satellite with known poses
+├── scripts/                      # evaluation and demo tools (run from the repository root)
+│   ├── verify_orientation.py     # quick check of the pose stage on a synthetic satellite (12 views)
+│   ├── evaluate_synthetic.py     # 80 random views: generate / infer / overlays / accuracy
+│   ├── make_tracking_video.py    # turntable video with the estimated wireframe + per-frame timing / fps
+│   ├── run_on_photos.py          # pose on photos of a known mesh (no ground truth), outline overlays
+│   └── simulate_closed_loop.py   # the closed loop with fake stages (no GPU needed)
 ├── requirements.txt
 ├── data/
 │   └── starsat/                  # example photos
-├── tests/                        # unit tests for the closed-loop modules (no GPU needed)
+├── output/                       # results (git-ignored): synthetic_eval, objects/, turntable_synthetic, turntable_hunyuan
+├── tests/                        # unit tests (no GPU needed)
 └── satpose/                      # library code
     ├── config.py                 # all user-tunable settings (paths, camera intrinsics, run options)
     ├── pipeline.py               # query resolution, FoundPose subprocess calls, CSV/overlay output
@@ -54,14 +61,19 @@ this repo reflects that — translation is reported but flagged as unreliable.
     ├── viewpoints.py             # Contribution 1: viewing directions, keyframes, Hunyuan view slots
     ├── provenance.py             # Contribution 2: observed vs. hallucinated mesh, weighted pose refinement
     ├── runtime.py                # Contribution 3: fast pose loop + background rebuild, atomic model swap
-    ├── metrics.py                # rotation / pointing / translation error
+    ├── refinement.py             # silhouette matching: refine every FoundPose candidate, pick the best
+    ├── postprocess.py            # applies the refinement to FoundPose's results (modes none / full)
+    ├── metrics.py                # rotation / pointing / translation error, SPEED score
+    ├── evaluation.py             # scores the pipeline on synthetic views with known poses
     ├── synthetic.py              # box satellite, STL writer, numpy renderer, wireframe overlay
+    ├── objects.py                # other test objects (textured satellite, rocket body, debris) and mesh-file loader
     ├── verification.py           # generate / run / evaluate the synthetic orientation check
     ├── reconstruction/
     │   ├── single_view.py        # Hunyuan3D-2, one image -> mesh
     │   └── multiview.py          # Hunyuan3D-2, front/back/left(/right) -> mesh
     └── foundpose_official/
         ├── build_bop_dataset.py  # packages mesh + photos as a minimal BOP dataset
+        ├── patch_bop_toolkit.py  # registers the custom dataset and candidate export in the official repo
         └── configs/              # gen_templates / gen_repre / infer settings for FoundPose
 ```
 
@@ -86,7 +98,7 @@ as plain callables, and are covered by tests that run without a GPU.
 
 ```
 python -m unittest discover -s tests -v     # run the tests
-python simulate_closed_loop.py              # watch the loop run on a simulated fly-around
+python scripts/simulate_closed_loop.py      # watch the loop run on a simulated fly-around
 ```
 
 **Status.** The logic and the scheduling are tested on synthetic data. Not done yet:
@@ -99,27 +111,113 @@ rebuilt mesh keeps the same object frame as the first one (the first keyframe is
 
 ## Verifying the pose stage on a synthetic satellite
 
-`verify_orientation.py` checks the pose pipeline against ground truth. It builds a box-shaped
+`scripts/verify_orientation.py` checks the pose pipeline against ground truth. It builds a box-shaped
 satellite (an asymmetric one, so only one orientation matches each view), saves it as
 `satellite.stl`, renders 12 views at known poses, and draws wireframes of the true pose.
 Hunyuan3D is not involved: the STL itself is the mesh, so only FoundPose is tested.
 
 ```
-python verify_orientation.py generate    # STL + renders + ground-truth wireframes (no GPU)
-python verify_orientation.py selftest    # report using FAKE estimates, to see what pass/fail looks like
-python verify_orientation.py run         # generate, run the real FoundPose on it, compare, draw overlays
-python verify_orientation.py evaluate    # re-compare an existing FoundPose result
+python scripts/verify_orientation.py generate    # STL + renders + ground-truth wireframes (no GPU)
+python scripts/verify_orientation.py selftest    # report using FAKE estimates, to see what pass/fail looks like
+python scripts/verify_orientation.py run         # generate, run the real FoundPose on it, compare, draw overlays
+python scripts/verify_orientation.py evaluate    # re-compare an existing FoundPose result
 ```
 
 Output goes to `output/synthetic_satellite/`:
 - `gt_contact_sheet.png` — the 12 views with the true wireframe (green).
 - `wireframe_eval/contact_sheet.png` — after `run`: true wireframe (green) and the wireframe at
   the **estimated rotation** (red), with the rotation error per view. Red covering green means
-  the orientation is right. Only rotation is compared; the red wireframe uses the true translation.
+  the orientation is right. Only rotation is compared; the red wireframe is drawn at the true
+  position, so any mismatch is rotation error alone.
 
-`run` needs the FoundPose setup from "Official pipeline setup" below. The renders are
-plain grey-shaded, like FoundPose's own templates, so this is a best case: if it fails here, the
-setup is wrong; if it passes, real photos are the next test.
+`run` needs the FoundPose setup from "Official pipeline setup" below, and must be started with
+that environment's Python (it imports `pyrender` and `trimesh`, which live there):
+
+```
+set CONDA_EXE=%USERPROFILE%\anaconda3\Scripts\conda.exe
+D:\conda_envs\foundpose_repo\python.exe scripts/verify_orientation.py run
+```
+
+The first run patches the official repo's `bop_toolkit` automatically (a `custom` dataset and
+an output folder next to the dataset; see `satpose/foundpose_official/patch_bop_toolkit.py`).
+Expect about 6 minutes on an RTX 3050 (798 templates, small DINOv2 model).
+
+The renders are plain grey-shaded, like FoundPose's own templates, so this is a best case: if it
+fails here, the setup is wrong; if it passes, real photos are the next test.
+
+### Silhouette refinement (improves FoundPose's poses)
+
+FoundPose matches the photo to rendered templates. As shipped, this repo kept only its single best
+coarse pose, which is accurate to roughly the template spacing and sometimes a flipped copy of the
+right answer. `satpose/refinement.py` and `satpose/postprocess.py` fix both:
+
+1. The patched `infer.py` saves **all** coarse candidates (20 per image, `INFER_CONFIG`).
+2. Each candidate is **refined**: rotation and translation are nudged to maximise the overlap
+   between the mesh's outline and the photo's object mask (bounded to 20 deg / 15% so it cannot
+   drift to another pose).
+3. The candidate with the best **score** is kept (`POSE_REFINEMENT = "full"`), where
+   score = outline overlap + 0.2 x (FoundPose's matched points / the most any candidate has).
+   The outline alone can mistake a pose for its flipped twin, or be misled by an inexact mesh;
+   FoundPose's own appearance matching is independent of both.
+
+Variants tried and **not kept**: re-ranking the candidates without refining them (worse than doing
+nothing, since unrefined candidates are too rough to compare), refining only FoundPose's own best pose
+(fixes small errors, not flips), a pull towards FoundPose's own pose (no help), and a confidence gate that
+falls back to FoundPose when the fit is poor (the threshold was too fragile). The code for these was removed.
+
+**Measured results.** All on synthetic views with an exact mesh and exact masks, on an RTX 3050 laptop
+(4 GB). "Gross failure" means a rotation error above 45 deg.
+
+*Kept in `output/synthetic_eval/` and `output/objects/`*: 80 random views of the box satellite (seed 99) and
+40 random views each of three more objects (seed 7). The textured satellite uses the same geometry with texture and
+lighting in the photos while FoundPose still matches against the plain grey mesh, as it would with a generated
+mesh. Reproduce with `scripts/evaluate_synthetic.py generate [--object NAME] | infer | overlays | accuracy`
+(FoundPose environment's Python).
+
+| object | FoundPose as shipped: rotation median / mean, within 10 deg | our pipeline: rotation median / mean, within 10 deg | our translation median | our SPEED score (median) |
+|---|---|---|---|---|
+| box satellite (80 views) | 6.2 / 35.0 deg, 69% | **0.52 / 1.4 deg, 99%** | 0.27% | 0.012 |
+| textured satellite (40) | 10.8 / 46.3 deg, 48% | **0.58 / 10.1 deg, 95%** | 0.27% | 0.013 |
+| irregular debris (40) | 19.7 / 52.8 deg, 30% | **0.50 / 1.4 deg, 98%** | 0.39% | 0.014 |
+| rocket body, nearly symmetric (40) | 160.0 / 106.6 deg, 2% | **7.8 / 35.1 deg, 55%** | 0.65% | 0.139 |
+| all four pooled (200 views) | 14.0 / 55.1 deg, 44% | **0.72 / 9.9 deg, 89%** | | |
+
+Translation error is the distance between the estimated and true mesh-centroid position, as a % of the
+camera distance (about 4 mesh units). The SPEED score is the rotation error in radians plus that relative
+translation error (the ESA SPEED/SPEC metric, lower is better). Per-view numbers are in `accuracy.csv`, and the
+wireframe overlays (green = truth, red = estimate) are in `wireframe_eval/` (our pipeline) and
+`wireframe_baseline/` (as shipped), each with a contact sheet and a sheet of the 8 worst views. The sub-1%
+translation holds only for a mesh of known scale; these are synthetic images, not real photos.
+
+*Recorded earlier; the experiment code was not kept, so these cannot be re-run from this repo.* Ablation (160 random views from two independent sets, before the bias fix below):
+
+| | median | mean | within 5 deg | within 10 deg | gross failures |
+|---|---|---|---|---|---|
+| FoundPose as shipped | 7.4 deg | 30.3 deg | 36% | 64% | 14.4% |
+| + refine best candidate only | 1.4 deg | 25.4 deg | 81% | 83% | 14.4% |
+| 20 candidates, no refinement | 6.7 deg | 22.9 deg | 39% | 70% | 10.0% |
+| 20 candidates + full refinement | 1.1 deg | 4.7 deg | 94% | 98% | 1.9% |
+
+Texture alone makes FoundPose worse (grey templates against coloured photos), and the refinement recovers most
+of it. A nearly symmetric body is the weak case: the outline barely changes under a flip, FoundPose often does not
+retrieve the right pose among its candidates, and 20% of the rocket-body views end up flipped about 180 deg. The
+three object sets were rebuilt from scratch after the clean-up; our pipeline reproduced its earlier medians to within
+0.2 deg, while FoundPose as shipped changed a lot between runs on the flip-prone objects (rocket body median 81 to
+160 deg, debris 34 to 20 deg), so treat its exact numbers there as noisy.
+
+Robustness (80 views, refinement given a bad mask or an inexact mesh while FoundPose still matches the true mesh;
+this is why the matched-point bonus of 0.2 is on): noisy masks (outline +-4 px, holes, a stray blob) cost almost
+nothing (96% within 10 deg); a mesh missing 5 small parts gave 90% within 10 deg (5% gross); a mesh with the solar
+panels 25% too long left a typical error of about 12 deg (7.5% gross).
+
+*Bias fix.* Translation first scored a consistent +1.1% too far away (97% of views). The outline matcher drew
+shapes about half a pixel too big (PIL fills every pixel a polygon touches), and the optimiser compensated by
+moving the object away. Drawing the outline 4x supersampled, with the right pixel-centre convention, cut the
+bias to about +0.2% and, as a side effect, the median rotation error from 1.4-1.6 deg to 0.5-0.6 deg.
+
+**Limits.** The refinement trusts the mesh outline. It tolerates a poor mask well, but a mesh that is clearly the
+wrong shape leaves a typical error of about 12 deg. Real Hunyuan3D meshes will have errors of this kind, so these
+numbers are an upper bound until the pipeline is run on real photos with real reconstructed meshes (below).
 
 ## 1. Setup
 
@@ -341,8 +439,8 @@ trust the numbers in the JSON output:**
   result), a wrong focal length is *not* fully compensated — it can bias the rotation
   estimate itself, especially at oblique viewing angles. If results look worse on
   angled photos than face-on ones, this is a likely contributing factor.
-- **Only rotation is trustworthy**, as stated up top — translation/depth reflects the
-  mesh's arbitrary reconstructed scale, not the real object's physical distance.
+- **For a reconstructed mesh only rotation is trustworthy**, as stated up top — translation/depth
+  reflects the mesh's arbitrary reconstructed scale, not the real object's physical distance.
 - **No ground truth was used to numerically score this** — all accuracy assessments were
   done by eye via the mask overlay, not a formal benchmark. Treat it as a working
   research prototype, not a validated production system.
@@ -363,3 +461,57 @@ trust the numbers in the JSON output:**
 - **Pipeline fails with `FileNotFoundError` on `dataset_meta.json`:** usually a
   relative-path issue if you passed a relative `--out-dir` — use an absolute path, or
   leave `--out-dir` unset to use the (already-absolute) default.
+
+## Speed (frames per second)
+
+`scripts/make_tracking_video.py generate | infer | video` runs the pipeline on a 48-frame turntable of the test
+satellite and times every frame, one at a time, on an idle RTX 3050 laptop (4 GB). It writes
+`output/turntable_synthetic/tracking.mp4` / `.gif` (left: FoundPose as shipped, right: our pipeline (with refinement);
+green = truth, red = estimate), `fps_report.txt` and per-frame errors.
+
+| variant | time per frame | fps | rotation median | within 10 deg | position error median |
+|---|---|---|---|---|---|
+| FoundPose as shipped | 0.53 s | 1.9 | 6.8 deg | 60% | 3.5% |
+| our pipeline (with refinement, 20 candidates) | 13.1 s | 0.08 | 0.40 deg | 100% | 0.26% |
+
+None of these is real time. FoundPose itself spends most of its 0.53 s on the coarse pose (0.27 s), image
+preparation (0.11 s) and feature extraction (0.09 s). Our pipeline's extra 12 s is the silhouette
+refinement, which runs on the CPU in a single thread, so a faster GPU alone would not help it. The video plays at
+8 fps for viewing; that is not the processing rate.
+
+### The same test on a Hunyuan3D-generated mesh
+
+The mesh made by the public Hunyuan3D-2 Space from one starsat photo (`output/turntable_hunyuan/starsat2_hunyuan.glb`)
+was simplified to 4,284 triangles and rendered as a 48-frame turntable, so the true pose of every frame is known
+(`make_tracking_video.py generate --object <mesh.glb>`, then `infer`, then `video --thin`; results in
+`output/turntable_hunyuan/`). The renders come from the mesh itself, so this measures the pipeline on this shape,
+not how closely the generated mesh matches the real satellite.
+
+| variant | time per frame | fps | rotation median | rotation mean | within 10 deg | position error median |
+|---|---|---|---|---|---|---|
+| FoundPose as shipped | 0.25 s | 4.1 | 9.0 deg | 25.6 deg | 58% | 3.6% |
+| our pipeline (with refinement, 20 candidates) | 73 s | 0.014 | 0.51 deg | 8.2 deg | 96% | 0.34% |
+
+Our pipeline (with refinement) fails on 2 of 48 frames (turntable positions 67.5 and 90 deg), both 180 deg flips seen almost
+edge-on, where the thin panel looks the same from either side; all other frames are within 4.7 deg. Refinement is
+about 5.6 times slower here than on the box satellite (73 s against 13 s) because the generated mesh has far more
+triangles to draw.
+
+### The same pipeline on the real starsat photos
+
+`scripts/run_on_photos.py --mesh <mesh.glb>` runs the pipeline on the five photos in `data/starsat/` (embedded in
+1024x1024 canvases, focal length guessed as one photo width) and draws the mesh outline over each photo. There is no
+ground truth, so this was judged by how well the mesh outline overlaps the photo's outline, not by accuracy
+(recorded once; those outputs were not kept):
+
+| variant | time per photo | mean outline overlap (IoU) |
+|---|---|---|
+| FoundPose as shipped | 0.4 s | 0.76 |
+| our pipeline (with refinement) | 94 s | 0.92 |
+
+The overlap is much better with our pipeline (with refinement), but the poses are not trustworthy: `starsat` and `starsat3`
+show the same front view, yet their estimated rotations differ by 176 deg, and the photo-to-photo turns (117, 77,
+135 and 176 deg) are far larger than the views suggest. The generated mesh is nearly left-right symmetric in outline,
+so an outline match cannot tell front from back; both flips fit equally well (overlap 0.97 on both photos). Resolving
+it needs internal detail (the dark compartments, the dish) or continuity between frames, not outline fit. This is the
+main open problem.

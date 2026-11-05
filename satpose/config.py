@@ -81,6 +81,17 @@ FOUNDPOSE_OFFICIAL_CONDA_ENV = os.environ.get("FOUNDPOSE_OFFICIAL_CONDA_ENV",
 
 OUTPUT_DIR = "output"
 
+# How FoundPose's poses are improved using the photo's silhouette (satpose/postprocess.py):
+#   "none" -- keep FoundPose's pose as is
+#   "full" -- refine every candidate against the photo's mask, keep the best fit
+# Measured on synthetic views (see README): median error 7.4 deg -> about 1 deg, and gross
+# failures (>45 deg) 14% -> about 2%.
+POSE_REFINEMENT = "full"
+
+# FoundPose inference config (satpose/foundpose_official/configs/infer/): how many matched
+# templates become pose candidates. 20 gave the best result once candidates are refined.
+INFER_CONFIG = "custom_top20"
+
 # ============================================================================
 # run_pipeline.py -- the single interactive entry point (asks "single or
 # multi view?" in the terminal, then runs everything end to end using the

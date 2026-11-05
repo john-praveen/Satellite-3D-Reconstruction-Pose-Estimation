@@ -30,11 +30,42 @@ def get_split_params(datasets_path, dataset_name, split):
 '''
 
 
+MINIMAL_CONFIG = '''import os
+
+if "BOP_PATH" in os.environ:
+    datasets_path = os.environ["BOP_PATH"]
+else:
+    datasets_path = r"/path/to/bop/datasets"
+
+output_path = r"/path/to/output/folder"
+'''
+
+
+MINIMAL_INFER = '''import os
+
+import numpy as np
+
+
+def run(output_dir, bop_im_id, coarse_poses, timer, times):
+    for _ in [0]:
+        for _ in [0]:
+            for _ in [0]:
+                times["pose_coarse"] = timer.elapsed("Time for coarse pose")
+    return times
+'''
+
+
 def make_repo(folder, text, newline="\n"):
-    target = os.path.join(folder, patch._RELATIVE_PATH)
+    """Writes a miniature official repo (the three patched files); returns dataset_params."""
+    target = os.path.join(folder, patch._DATASET_PARAMS)
     os.makedirs(os.path.dirname(target))
+    os.makedirs(os.path.join(folder, os.path.dirname(patch._INFER)))
     with open(target, "w", newline="") as f:
         f.write(text.replace("\n", newline))
+    with open(os.path.join(folder, patch._CONFIG), "w", newline="") as f:
+        f.write(MINIMAL_CONFIG.replace("\n", newline))
+    with open(os.path.join(folder, patch._INFER), "w", newline="") as f:
+        f.write(MINIMAL_INFER.replace("\n", newline))
     return target
 
 
@@ -61,6 +92,50 @@ class PatchTests(unittest.TestCase):
             self.assertEqual(params["im_size"], (1024, 1024))
             self.assertEqual(params["depth_range"], (800, 3000))
             self.assertEqual(params["scene_ids"], [0])
+
+    def test_output_path_follows_bop_path_when_it_is_set(self):
+        with tempfile.TemporaryDirectory() as folder:
+            make_repo(folder, MINIMAL_DATASET_PARAMS)
+            patch.apply(folder)
+            config_path = os.path.join(folder, patch._CONFIG)
+            previous = os.environ.get("BOP_PATH")
+            try:
+                os.environ["BOP_PATH"] = os.path.join(folder, "bop")
+                self.assertEqual(load_module(config_path)["output_path"],
+                                 os.path.join(folder, "bop", "outputs"))
+                del os.environ["BOP_PATH"]
+                self.assertEqual(load_module(config_path)["output_path"],
+                                 "/path/to/output/folder")
+            finally:
+                if previous is None:
+                    os.environ.pop("BOP_PATH", None)
+                else:
+                    os.environ["BOP_PATH"] = previous
+
+    def test_infer_saves_every_coarse_candidate_and_still_returns_normally(self):
+        import json
+
+        import numpy as np
+
+        class Timer:
+            def elapsed(self, message):
+                return 0.5
+
+        with tempfile.TemporaryDirectory() as folder:
+            make_repo(folder, MINIMAL_DATASET_PARAMS)
+            patch.apply(folder)
+            module = load_module(os.path.join(folder, patch._INFER))
+            candidates = [
+                {"R_m2c": np.eye(3), "t_m2c": np.array([[1.0], [2.0], [3.0]]), "quality": 40.0},
+                {"R_m2c": -np.eye(3), "t_m2c": np.array([4.0, 5.0, 6.0]), "quality": 12.0},
+            ]
+            times = module["run"](folder, 3, candidates, Timer(), {})
+            self.assertEqual(times, {"pose_coarse": 0.5})  # original behaviour intact
+            with open(os.path.join(folder, "candidates", "000003.json")) as f:
+                saved = json.load(f)
+            self.assertEqual([c["inliers"] for c in saved], [40.0, 12.0])
+            self.assertEqual(saved[0]["t"], [1.0, 2.0, 3.0])
+            self.assertEqual(saved[1]["R"][0][0], -1.0)
 
     def test_other_datasets_still_work_and_unknown_ones_still_fail(self):
         with tempfile.TemporaryDirectory() as folder:

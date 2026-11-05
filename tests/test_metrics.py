@@ -3,7 +3,9 @@ import unittest
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from satpose.metrics import pointing_error_deg, rotation_error_deg, translation_error
+from satpose.metrics import (
+    pointing_error_deg, rotation_error_deg, speed_score, translation_components, translation_error,
+)
 
 
 class MetricTests(unittest.TestCase):
@@ -18,6 +20,18 @@ class MetricTests(unittest.TestCase):
 
     def test_translation_error_is_euclidean(self):
         self.assertAlmostEqual(translation_error([0, 0, 0], [3, 4, 0]), 5.0)
+
+    def test_translation_is_split_into_lateral_and_depth_and_made_relative(self):
+        parts = translation_components([0.3, 0.4, 4.0 + 1.2], [0.0, 0.0, 4.0])
+        self.assertAlmostEqual(parts["lateral"], 0.5)
+        self.assertAlmostEqual(parts["depth"], 1.2)
+        self.assertAlmostEqual(parts["total"], np.hypot(0.5, 1.2))
+        self.assertAlmostEqual(parts["relative"], 1.3 / 4.0)       # 1.3 off at a distance of 4
+        self.assertAlmostEqual(translation_components([0, 0, 2.8], [0, 0, 4.0])["depth"], 1.2)
+
+    def test_speed_score_adds_radians_and_relative_translation(self):
+        self.assertAlmostEqual(speed_score(0.0, 0.0), 0.0)
+        self.assertAlmostEqual(speed_score(180.0, 0.05), np.pi + 0.05)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ this needs.
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -19,6 +20,7 @@ from PIL import Image
 from satpose import config
 from satpose.foundpose_official.build_bop_dataset import build_custom_bop_dataset
 from satpose.foundpose_official.patch_bop_toolkit import apply as patch_bop_toolkit
+from satpose.postprocess import improve_poses, load_mesh_triangles, save_poses
 from satpose.visualize import draw_axes, render_mask_overlay
 
 _remover = None
@@ -155,6 +157,33 @@ def save_poses_csv(poses: list, query_images: list, out_dir: str):
     return csv_path
 
 
+def _official_inference_dir(bop_root: str, infer_config: str) -> str:
+    """Folder the official infer.py writes to: ``outputs/inference/custom_<version>/1``.
+
+    Its ``version`` setting also selects which object representation is loaded, so configs
+    that share a representation share this folder; ``_snapshot_inference`` keeps each run.
+    """
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "foundpose_official",
+                               "configs", "infer", f"{infer_config}.json")
+    with open(config_path) as f:
+        version = json.load(f)["infer_opts"]["version"]
+    return os.path.join(bop_root, "outputs", "inference", f"custom_{version}", "1")
+
+
+def _inference_dir(bop_root: str, infer_config: str) -> str:
+    """Where the results of one inference config are kept (a copy of the official output)."""
+    return os.path.join(bop_root, "outputs", "runs", infer_config)
+
+
+def _snapshot_inference(bop_root: str, infer_config: str) -> str:
+    """Copies the official output to this config's own folder, replacing an older copy."""
+    destination = _inference_dir(bop_root, infer_config)
+    if os.path.exists(destination):
+        shutil.rmtree(destination)
+    shutil.copytree(_official_inference_dir(bop_root, infer_config), destination)
+    return destination
+
+
 def _conda_env_args(env: str) -> list:
     """`-n <name>` for an environment name, `-p <path>` when `env` is a directory path."""
     is_path = os.sep in env or "/" in env
@@ -184,7 +213,9 @@ def _run_official_script(script_name: str, config_name: str, bop_root: str):
 
 def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
                             skip_templates: bool = False, save_mask: bool = True,
-                            save_axes: bool = True, nobg_paths: list = None):
+                            save_axes: bool = True, nobg_paths: list = None,
+                            infer_config: str = None, refinement: str = None,
+                            template_config: str = "custom", repre_config: str = "custom"):
     """End-to-end: remove the background from each query photo, build a minimal BOP
     dataset around `mesh_path`, run the official FoundPose repo's
     gen_templates.py -> gen_repre.py -> infer.py (in its own conda env), save the
@@ -194,7 +225,19 @@ def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
 
     `nobg_paths`: optional RGBA cut-outs, one per query image and in the same order. When
     given, the background-removal step is skipped (used for synthetic renders, which
-    already have an exact alpha mask)."""
+    already have an exact alpha mask).
+
+    `infer_config`, `template_config`, `repre_config`: names of the FoundPose configs under
+    satpose/foundpose_official/configs/{infer,gen_templates,gen_repre}/ (defaults:
+    config.INFER_CONFIG, "custom", "custom").
+    A variant that changes the templates needs its own matching trio, with a distinct
+    `version` in each config.
+
+    `refinement`: how to improve FoundPose's poses with the photo's silhouette (see
+    satpose/postprocess.py): "none" or "full". Defaults to
+    config.POSE_REFINEMENT."""
+    refinement = config.POSE_REFINEMENT if refinement is None else refinement
+    infer_config = config.INFER_CONFIG if infer_config is None else infer_config
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     query_images = [os.path.abspath(q) for q in query_images]
@@ -229,20 +272,28 @@ def run_official_foundpose(mesh_path: str, query_images: list, out_dir: str,
     if not skip_templates:
         build_custom_bop_dataset(mesh_path, nobg_paths, query_images, config.CAMERA_K,
                                   config.IMAGE_WIDTH, config.IMAGE_HEIGHT, bop_root)
-        _run_official_script("gen_templates.py", "custom", bop_root)
-        _run_official_script("gen_repre.py", "custom", bop_root)
+        _run_official_script("gen_templates.py", template_config, bop_root)
+        _run_official_script("gen_repre.py", repre_config, bop_root)
     else:
         print("== skipping template generation, reusing existing BOP dataset/templates ==")
-    _run_official_script("infer.py", "custom", bop_root)
+    stale_candidates = os.path.join(_official_inference_dir(bop_root, infer_config), "candidates")
+    if os.path.exists(stale_candidates):
+        shutil.rmtree(stale_candidates)  # never mix candidates from an earlier config
+    _run_official_script("infer.py", infer_config, bop_root)
 
-    poses_path = os.path.join(bop_root, "outputs", "inference", "custom_v1", "1",
-                               "estimated-poses.json")
-    with open(poses_path) as f:
+    inference_dir = _snapshot_inference(bop_root, infer_config)
+    with open(os.path.join(inference_dir, "estimated-poses.json")) as f:
         poses = json.load(f)
+
+    mesh_ply = os.path.join(bop_root, "custom", "models", "obj_000001.ply")
+    if refinement != "none":
+        print(f"== improving {len(poses)} pose(s) with silhouette matching ({refinement}) ==")
+        poses = improve_poses(poses, os.path.join(inference_dir, "candidates"), nobg_paths,
+                              load_mesh_triangles(mesh_ply), config.CAMERA_K, refinement)
+        save_poses(poses, os.path.join(inference_dir, "estimated-poses-refined.json"))
 
     save_poses_csv(poses, query_images, out_dir)
 
-    mesh_ply = os.path.join(bop_root, "custom", "models", "obj_000001.ply")
     for pose in poses:
         im_id = int(pose["img_id"])
         raw_path = query_images[im_id]

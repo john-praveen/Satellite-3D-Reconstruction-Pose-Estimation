@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from helpers import fibonacci_sphere
 from satpose.metrics import rotation_error_deg
-from satpose.provenance import ObservationConfig, ObservationMap, refine_pose_weighted
+from satpose.provenance import ObservationMap, refine_pose_weighted
 
 K = np.array([[500.0, 0, 320], [0, 500, 240], [0, 0, 1]])
 SIZE = (640, 480)

@@ -9,6 +9,7 @@ pyrender
 PyOpenGL
 trimesh
 opencv-python
+imageio
 pillow
 numpy
 scipy

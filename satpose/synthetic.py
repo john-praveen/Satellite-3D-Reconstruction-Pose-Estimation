@@ -13,7 +13,7 @@ from __future__ import annotations
 import itertools
 import struct
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -39,6 +39,7 @@ class Satellite:
     triangles: np.ndarray   # (T, 3, 3) vertex positions
     normals: np.ndarray     # (T, 3) outward unit normals
     edges: np.ndarray       # (E, 2, 3) box edge end points
+    parts: Optional[np.ndarray] = None  # (T,) integer part id per triangle, used by textures
 
     @property
     def radius(self) -> float:
@@ -74,18 +75,19 @@ def _box_faces_and_edges(center: np.ndarray, size: np.ndarray):
 
 
 def build_satellite() -> Satellite:
-    """Builds the satellite, centred on the middle of its bounding box."""
-    triangles, normals, edges = [], [], []
-    for center, size in _BOXES:
+    """Builds the satellite (boxes for the body, panels and fittings), centred on the middle
+    of its bounding box."""
+    triangles, normals, edges, ids = [], [], [], []
+    for index, (center, size) in enumerate(_BOXES):
         t, n, e = _box_faces_and_edges(np.array(center, float), np.array(size, float))
         triangles += t
         normals += n
         edges += e
-    triangles = np.array(triangles)
-    edges = np.array(edges)
-    low, high = triangles.reshape(-1, 3).min(axis=0), triangles.reshape(-1, 3).max(axis=0)
-    shift = (low + high) / 2.0
-    return Satellite(triangles - shift, np.array(normals), edges - shift)
+        ids += [index] * len(t)
+    triangles, normals, edges = np.array(triangles), np.array(normals), np.array(edges)
+    points = triangles.reshape(-1, 3)
+    shift = (points.min(axis=0) + points.max(axis=0)) / 2.0
+    return Satellite(triangles - shift, normals, edges - shift, parts=np.array(ids))
 
 
 def write_binary_stl(path: str, triangles: np.ndarray, normals: Optional[np.ndarray] = None) -> None:
@@ -144,11 +146,45 @@ def sample_poses(count: int = 12, distance: float = 4.0, max_elevation_deg: floa
     return poses
 
 
+def turntable_poses(count: int, distance: float = 4.0, elevation_deg: float = 25.0,
+                    turns: float = 1.0):
+    """A smooth orbit: the camera circles the object at a fixed elevation and distance, so
+    consecutive views differ by the same small rotation (a video of the object turning)."""
+    elevation = np.radians(elevation_deg)
+    poses = []
+    for i in range(count):
+        azimuth = 2.0 * np.pi * turns * i / count
+        direction = [np.sin(azimuth) * np.cos(elevation), np.sin(elevation),
+                     np.cos(azimuth) * np.cos(elevation)]
+        poses.append(look_at_pose(direction, distance))
+    return poses
+
+
+def random_poses(count: int, seed: int, distance: float = 4.0, distance_jitter: float = 0.4,
+                 max_elevation_deg: float = 70.0, max_roll_deg: float = 45.0):
+    """Random viewing poses for larger tests. Different seeds give independent view sets, so
+    a method can be tuned on one seed and scored on another."""
+    rng = np.random.default_rng(seed)
+    poses = []
+    for _ in range(count):
+        azimuth = rng.uniform(0.0, 2.0 * np.pi)
+        elevation = np.arcsin(rng.uniform(-1.0, 1.0) * np.sin(np.radians(max_elevation_deg)))
+        direction = [np.sin(azimuth) * np.cos(elevation), np.sin(elevation),
+                     np.cos(azimuth) * np.cos(elevation)]
+        poses.append(look_at_pose(direction, distance + rng.uniform(-distance_jitter, distance_jitter),
+                                  roll_deg=rng.uniform(-max_roll_deg, max_roll_deg)))
+    return poses
+
+
 # -- rendering -------------------------------------------------------------------------
 
 def render(satellite: Satellite, R: np.ndarray, t: np.ndarray, camera_K: np.ndarray,
-           image_size: Tuple[int, int]):
-    """Rasterises the satellite with flat grey shading.
+           image_size: Tuple[int, int], texture=None):
+    """Rasterises the satellite with flat shading, grey unless a ``texture`` is given.
+
+    ``texture(points, part_ids)`` maps object-space points (N, 3) and their part ids (N,) to
+    albedo colours (N, 3) in [0, 1]; it is evaluated per pixel at the point of the surface
+    that pixel sees, so patterns stay attached to the object as it turns.
 
     Returns ``(rgb, mask, depth)``: a (H, W, 3) uint8 image on a dark background, a boolean
     object mask, and a float depth map (``inf`` where there is no surface).
@@ -165,7 +201,7 @@ def render(satellite: Satellite, R: np.ndarray, t: np.ndarray, camera_K: np.ndar
     rgb = np.empty((height, width, 3), dtype=np.uint8)
     rgb[:] = (18, 20, 28)
 
-    for tri, normal in zip(cam, normals_cam):
+    for index, (tri, normal) in enumerate(zip(cam, normals_cam)):
         if np.dot(normal, tri.mean(axis=0)) >= 0 or (tri[:, 2] <= 1e-3).any():
             continue  # facing away, or behind the camera
         x = fx * tri[:, 0] / tri[:, 2] + cx
@@ -189,8 +225,14 @@ def render(satellite: Satellite, R: np.ndarray, t: np.ndarray, camera_K: np.ndar
         closer = inside & (pixel_depth < window)
         window[closer] = pixel_depth[closer]
         shade = 0.30 + 0.70 * max(0.0, float(np.dot(normal, light)))
-        value = int(round(255 * 0.78 * shade))
-        rgb[y0:y1, x0:x1][closer] = value
+        if texture is None or satellite.parts is None:
+            rgb[y0:y1, x0:x1][closer] = int(round(255 * 0.78 * shade))
+            continue
+        inverse_depth = np.stack([w0 / tri[0, 2], w1 / tri[1, 2], w2 / tri[2, 2]], axis=-1)
+        weights = inverse_depth / inverse_depth.sum(axis=-1, keepdims=True)
+        points = weights[closer] @ satellite.triangles[index]       # perspective-correct
+        albedo = texture(points, np.full(len(points), satellite.parts[index]))
+        rgb[y0:y1, x0:x1][closer] = np.clip(albedo * shade * 255, 0, 255).astype(np.uint8)
 
     return rgb, np.isfinite(depth), depth
 

@@ -38,6 +38,10 @@ def build_custom_bop_dataset(mesh_path: str, image_nobg_paths: list, image_raw_p
     mesh = trimesh.load(mesh_path, force="mesh")
     centroid = mesh.vertices.mean(axis=0)
     mesh.vertices = (mesh.vertices - centroid) * mm_scale
+    # Extra per-face data (e.g. the "stl" value trimesh keeps from an STL file) would be
+    # written into the PLY, and bop_toolkit's PLY reader cannot skip unknown properties:
+    # it misreads every face after the first.
+    mesh.face_attributes.clear()
     models_dir = os.path.join(bop_root, "models")
     os.makedirs(models_dir, exist_ok=True)
     mesh.export(os.path.join(models_dir, "obj_000001.ply"))

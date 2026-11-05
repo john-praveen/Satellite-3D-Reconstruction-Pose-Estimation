@@ -1,8 +1,8 @@
 """Pose-error metrics for evaluating estimated poses against ground truth.
 
-Rotation is the trustworthy output of this pipeline (the reconstructed mesh has an
-arbitrary scale), so rotation and pointing error are the headline metrics; translation
-error is only meaningful when the mesh scale is known.
+With a reconstructed mesh of arbitrary scale only rotation and pointing error are
+meaningful; translation error needs the mesh scale to be known (as it is for the synthetic
+test objects, where the mesh is the one that was rendered).
 """
 from __future__ import annotations
 
@@ -32,3 +32,24 @@ def translation_error(t_estimated: np.ndarray, t_truth: np.ndarray) -> float:
     """Euclidean distance between translations, in the units of the inputs."""
     return float(np.linalg.norm(np.asarray(t_estimated, dtype=np.float64).reshape(3)
                                 - np.asarray(t_truth, dtype=np.float64).reshape(3)))
+
+
+def translation_components(t_estimated: np.ndarray, t_truth: np.ndarray) -> dict:
+    """Translation error split for a camera looking along +z.
+
+    ``total`` is the Euclidean distance, ``lateral`` the part across the image (x, y) and
+    ``depth`` the part along the line of sight (z), all in the units of the inputs;
+    ``relative`` is ``total`` divided by the true distance (the SPEED/SPEC ``S_t``).
+    """
+    difference = np.asarray(t_estimated, dtype=np.float64).reshape(3) \
+        - np.asarray(t_truth, dtype=np.float64).reshape(3)
+    total = float(np.linalg.norm(difference))
+    return {"total": total, "lateral": float(np.linalg.norm(difference[:2])),
+            "depth": float(abs(difference[2])),
+            "relative": total / float(np.linalg.norm(np.asarray(t_truth, dtype=np.float64)))}
+
+
+def speed_score(rotation_deg: float, relative_translation: float) -> float:
+    """The ESA SPEED/SPEC pose score: rotation error in radians plus relative translation
+    error (lower is better). It is what satellite-pose papers such as DreamSat report."""
+    return float(np.radians(rotation_deg) + relative_translation)
